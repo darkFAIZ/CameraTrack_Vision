@@ -21,41 +21,33 @@ def get_index_tip(hand_landmarks: object, frame_width: int, frame_height: int) -
 
 
 def is_drawing(hand_landmarks: object) -> bool:
-	"""Draw only when the index finger is raised above its middle joint."""
+	"""Draw while the index finger is extended, regardless of hand tilt."""
 	landmarks = hand_landmarks.landmark
-	index_tip = landmarks[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
-	index_pip = landmarks[mp.solutions.hands.HandLandmark.INDEX_FINGER_PIP]
-	return index_tip.y < index_pip.y
+	mcp = landmarks[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
+	pip = landmarks[mp.solutions.hands.HandLandmark.INDEX_FINGER_PIP]
+	tip = landmarks[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
+
+	# Compare the full 3D landmark distances so turning the hand does not make
+	# an extended finger look bent just because its tip moved lower in the image.
+	segment_length = np.linalg.norm(np.array([pip.x - mcp.x, pip.y - mcp.y, pip.z - mcp.z]))
+	finger_length = np.linalg.norm(np.array([tip.x - mcp.x, tip.y - mcp.y, tip.z - mcp.z]))
+	return finger_length > segment_length * 1.25
 
 
 def classify_circle(points: list[tuple[int, int]], board_width: int, board_height: int) -> str | None:
-	"""Return a size only when the stroke is a closed, reasonably round circle."""
-	if len(points) < 25:
+	"""Classify a finished stroke using only its bounding-box diameter."""
+	if len(points) < 10:
 		return None
 
-	contour = np.array(points, dtype=np.int32).reshape((-1, 1, 2))
-	(_, _), (box_width, box_height), _ = cv2.minAreaRect(contour)
-	diameter = max(box_width, box_height)
+	coordinates = np.asarray(points, dtype=np.int32)
+	width = int(coordinates[:, 0].max() - coordinates[:, 0].min())
+	height = int(coordinates[:, 1].max() - coordinates[:, 1].min())
+	diameter = max(width, height)
 	if diameter < 30:
 		return None
 
-	# Reject open arcs, including a half-circle, instead of closing them with
-	# an imaginary straight line and mistaking them for a complete circle.
-	closure_gap = float(np.linalg.norm(np.asarray(points[0]) - np.asarray(points[-1])))
-	if closure_gap > diameter * 0.25:
-		return None
-
-	perimeter = cv2.arcLength(contour, False)
-	if perimeter == 0:
-		return None
-
-	area = abs(cv2.contourArea(contour))
-	circularity = 4 * np.pi * area / (perimeter * perimeter)
-	if circularity < 0.60:
-		return None
-
-	# Classify by the circle's measured diameter, so both size choices scale
-	# with the camera drawing area rather than being dependent on stroke area.
+	# Use the larger bounding-box dimension as the drawn diameter. This accepts
+	# imperfect or slightly oval circles without checking closure or roundness.
 	size_cutoff = min(board_width, board_height) * 0.35
 	return "small" if diameter < size_cutoff else "large"
 
@@ -116,8 +108,8 @@ def main() -> None:
 	with hands_module.Hands(
 		static_image_mode=False,
 		max_num_hands=1,
-		min_detection_confidence=0.7,
-		min_tracking_confidence=0.7,
+		min_detection_confidence=0.6,
+		min_tracking_confidence=0.55,
 	) as hands:
 		try:
 			while True:
@@ -142,7 +134,7 @@ def main() -> None:
 
 				# Allow brief tracking gaps while the hand turns around the circle.
 				# Open or incomplete strokes are rejected by classify_circle.
-				if stroke and not currently_drawing and time.monotonic() - last_drawing_time > 0.8:
+				if stroke and not currently_drawing and time.monotonic() - last_drawing_time > 1.0:
 					size = classify_circle(stroke, board_width, board_height)
 					if size:
 						play_video(SMALL_VIDEO if size == "small" else LARGE_VIDEO)
