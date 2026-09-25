@@ -12,6 +12,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 SMALL_VIDEO = SCRIPT_DIR / "small_circle.mp4"
 LARGE_VIDEO = SCRIPT_DIR / "large_circle.mp4"
 WINDOW_NAME = "CameraTrack Vision"
+TIP_SMOOTHING = 0.30
 
 
 def get_index_tip(hand_landmarks: object, frame_width: int, frame_height: int) -> tuple[int, int]:
@@ -103,6 +104,7 @@ def main() -> None:
 	hands_module = mp.solutions.hands
 	board_width, board_height = 640, 480
 	stroke: list[tuple[int, int]] = []
+	smoothed_tip: np.ndarray | None = None
 	last_drawing_time = 0.0
 
 	with hands_module.Hands(
@@ -127,10 +129,16 @@ def main() -> None:
 					tip = get_index_tip(hand, board_width, board_height)
 					if is_drawing(hand) and 0 <= tip[0] < board_width and 0 <= tip[1] < board_height:
 						currently_drawing = True
-						if not stroke or np.linalg.norm(np.array(tip) - np.array(stroke[-1])) > 3:
-							stroke.append(tip)
+						point = np.array(tip, dtype=np.float32)
+						if smoothed_tip is None:
+							smoothed_tip = point
+						else:
+							smoothed_tip += TIP_SMOOTHING * (point - smoothed_tip)
+						draw_tip = tuple(np.round(smoothed_tip).astype(int))
+						if not stroke or np.linalg.norm(smoothed_tip - np.array(stroke[-1])) > 2:
+							stroke.append(draw_tip)
 						last_drawing_time = time.monotonic()
-						cv2.circle(frame, tip, 8, (0, 255, 255), -1)
+						cv2.circle(frame, draw_tip, 8, (0, 255, 255), -1)
 
 				# Allow brief tracking gaps while the hand turns around the circle.
 				# Open or incomplete strokes are rejected by classify_circle.
@@ -141,6 +149,7 @@ def main() -> None:
 					else:
 						print("The stroke was not recognized as a circle. Try again.")
 					stroke.clear()
+					smoothed_tip = None
 
 				if len(stroke) > 1:
 					cv2.polylines(frame, [np.array(stroke)], False, (0, 255, 0), 4)
@@ -156,6 +165,7 @@ def main() -> None:
 					break
 				if key == ord("c"):
 					stroke.clear()
+					smoothed_tip = None
 		finally:
 			camera.release()
 			cv2.destroyAllWindows()
