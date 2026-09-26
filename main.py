@@ -1,6 +1,7 @@
-"""Draw a circle in front of the camera and play a size-based animation."""
+"""Draw a circle in front of the camera and play a random animation."""
 
 from pathlib import Path
+import random
 import time
 
 import cv2
@@ -9,8 +10,7 @@ import numpy as np
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-SMALL_VIDEO = SCRIPT_DIR / "small_circle.mp4"
-LARGE_VIDEO = SCRIPT_DIR / "large_circle.mp4"
+VIDEOS = sorted(SCRIPT_DIR.glob("*.mp4"))
 WINDOW_NAME = "CameraTrack Vision"
 TIP_SMOOTHING = 0.30
 
@@ -35,22 +35,22 @@ def is_drawing(hand_landmarks: object) -> bool:
 	return finger_length > segment_length * 1.25
 
 
-def classify_circle(points: list[tuple[int, int]], board_width: int, board_height: int) -> str | None:
-	"""Classify a finished stroke using only its bounding-box diameter."""
+def is_circle_stroke(points: list[tuple[int, int]]) -> bool:
+	"""Accept a sufficiently large drawn loop without requiring a perfect shape."""
 	if len(points) < 10:
-		return None
+		return False
 
 	coordinates = np.asarray(points, dtype=np.int32)
 	width = int(coordinates[:, 0].max() - coordinates[:, 0].min())
 	height = int(coordinates[:, 1].max() - coordinates[:, 1].min())
 	diameter = max(width, height)
 	if diameter < 30:
-		return None
+		return False
 
-	# Use the larger bounding-box dimension as the drawn diameter. This accepts
-	# imperfect or slightly oval circles without checking closure or roundness.
-	size_cutoff = min(board_width, board_height) * 0.35
-	return "small" if diameter < size_cutoff else "large"
+	# Allow a loose closing gap so hand-drawn loops need not be perfectly round
+	# or meet exactly at their starting point, while rejecting open line strokes.
+	closing_gap = float(np.linalg.norm(coordinates[0] - coordinates[-1]))
+	return closing_gap <= diameter * 0.55
 
 
 def fit_video_frame(frame: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -95,6 +95,8 @@ def main() -> None:
 			"Use Python 3.12 and install the pinned dependencies with: "
 			"python -m pip install -r requirements.txt"
 		)
+	if not VIDEOS:
+		raise FileNotFoundError(f"No .mp4 videos found in {SCRIPT_DIR}")
 
 	camera = cv2.VideoCapture(0)
 	if not camera.isOpened():
@@ -141,11 +143,11 @@ def main() -> None:
 						cv2.circle(frame, draw_tip, 8, (0, 255, 255), -1)
 
 				# Allow brief tracking gaps while the hand turns around the circle.
-				# Open or incomplete strokes are rejected by classify_circle.
 				if stroke and not currently_drawing and time.monotonic() - last_drawing_time > 1.0:
-					size = classify_circle(stroke, board_width, board_height)
-					if size:
-						play_video(SMALL_VIDEO if size == "small" else LARGE_VIDEO)
+					if is_circle_stroke(stroke):
+						video_path = random.choice(VIDEOS)
+						print(f"Playing: {video_path.name}")
+						play_video(video_path)
 					else:
 						print("The stroke was not recognized as a circle. Try again.")
 					stroke.clear()
