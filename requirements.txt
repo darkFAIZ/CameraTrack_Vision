@@ -1,3 +1,4 @@
 opencv-python
-mediapipe==0.10.21
+mediapipe==0.10.30
 numpy
+imageio-ffmpeg

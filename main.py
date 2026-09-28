@@ -1,8 +1,11 @@
 """Draw a circle in front of the camera and play a random animation."""
 
-from pathlib import Path
+import os
 import random
+import shutil
+import subprocess
 import time
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
@@ -65,26 +68,69 @@ def fit_video_frame(frame: np.ndarray, width: int, height: int) -> np.ndarray:
 	return resized[y_start:y_start + height, x_start:x_start + width]
 
 
+def get_ffplay_path() -> str | None:
+	"""Resolve ffplay from the system or the bundled imageio-ffmpeg install."""
+	ffplay = shutil.which("ffplay")
+	if ffplay:
+		return ffplay
+
+	try:
+		from imageio_ffmpeg import get_ffmpeg_exe
+	except ImportError:
+		return None
+
+	ffmpeg_path = Path(get_ffmpeg_exe()).resolve()
+	ffplay_name = "ffplay.exe" if os.name == "nt" else "ffplay"
+	candidate = ffmpeg_path.with_name(ffplay_name)
+	if candidate.exists():
+		return str(candidate)
+	return None
+
+
 def play_video(video_path: Path) -> None:
-	"""Play one animation and return to the camera when it ends."""
+	"""Play one animation with its original audio and return to the camera when it ends."""
 	if not video_path.exists():
 		print(f"Video not found: {video_path}")
 		return
 
-	video = cv2.VideoCapture(str(video_path))
-	if not video.isOpened():
-		print(f"Could not open video: {video_path}")
+	ffplay_path = get_ffplay_path()
+	if ffplay_path is None:
+		print(
+			"ffplay was not found. Install imageio-ffmpeg or ffmpeg to enable the jumpscare audio. "
+			"Falling back to the silent OpenCV playback."
+		)
+		video = cv2.VideoCapture(str(video_path))
+		if not video.isOpened():
+			print(f"Could not open video: {video_path}")
+			return
+
+		while True:
+			success, frame = video.read()
+			if not success:
+				break
+			cv2.imshow(WINDOW_NAME, fit_video_frame(frame, 640, 480))
+			if cv2.waitKey(30) & 0xFF == ord("q"):
+				video.release()
+				raise KeyboardInterrupt
+		video.release()
 		return
 
-	while True:
-		success, frame = video.read()
-		if not success:
-			break
-		cv2.imshow(WINDOW_NAME, fit_video_frame(frame, 640, 480))
-		if cv2.waitKey(30) & 0xFF == ord("q"):
-			video.release()
-			raise KeyboardInterrupt
-	video.release()
+	print(f"Playing with audio: {video_path.name}")
+	subprocess.run(
+		[
+			ffplay_path,
+			"-autoexit",
+			"-hide_banner",
+			"-loglevel",
+			"error",
+			"-volume",
+			"100",
+			"-window_title",
+			WINDOW_NAME,
+			str(video_path),
+		],
+		check=False,
+	)
 
 
 def main() -> None:
@@ -140,7 +186,7 @@ def main() -> None:
 						if not stroke or np.linalg.norm(smoothed_tip - np.array(stroke[-1])) > 2:
 							stroke.append(draw_tip)
 						last_drawing_time = time.monotonic()
-						cv2.circle(frame, draw_tip, 8, (0, 255, 255), -1)
+						cv2.circle(frame, draw_tip, 6, (255, 255, 255), -1)
 
 				# Allow brief tracking gaps while the hand turns around the circle.
 				if stroke and not currently_drawing and time.monotonic() - last_drawing_time > 1.0:
@@ -154,7 +200,7 @@ def main() -> None:
 					smoothed_tip = None
 
 				if len(stroke) > 1:
-					cv2.polylines(frame, [np.array(stroke)], False, (0, 255, 0), 4)
+					cv2.polylines(frame, [np.array(stroke)], False, (200, 200, 200), 3)
 
 				cv2.putText(frame, "Raise index finger and draw a circle", (15, 30),
 							cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
