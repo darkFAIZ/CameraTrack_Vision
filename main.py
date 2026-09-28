@@ -74,16 +74,18 @@ def get_ffplay_path() -> str | None:
 	if ffplay:
 		return ffplay
 
-	try:
-		from imageio_ffmpeg import get_ffmpeg_exe
-	except ImportError:
-		return None
-
-	ffmpeg_path = Path(get_ffmpeg_exe()).resolve()
+	ffmpeg_dir = Path(__file__).resolve().parent
 	ffplay_name = "ffplay.exe" if os.name == "nt" else "ffplay"
-	candidate = ffmpeg_path.with_name(ffplay_name)
-	if candidate.exists():
-		return str(candidate)
+	for base in (
+		ffmpeg_dir,
+		Path(os.environ.get("ProgramFiles", "")),
+		Path(os.environ.get("ProgramFiles(x86)", "")),
+	):
+		if not str(base):
+			continue
+		candidate = base / ffplay_name
+		if candidate.exists():
+			return str(candidate)
 	return None
 
 
